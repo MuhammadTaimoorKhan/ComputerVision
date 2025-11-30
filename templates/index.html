@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Digit Recognizer - Animated UI</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styles for animations and layout */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117; /* Dark background for a modern feel */
+            color: #c9d1d9;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* Styling for the drag-and-drop area */
+        #drop-area {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 3px dashed #404652;
+            cursor: pointer;
+        }
+
+        #drop-area.highlight {
+            border-color: #007bff; /* Vibrant blue highlight */
+            background-color: #161b22;
+        }
+
+        /* Image and Result container */
+        #result-container {
+            display: none;
+            position: relative;
+            min-height: 200px;
+            overflow: hidden;
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        /* Image preview transitions */
+        #image-preview {
+            object-fit: contain;
+            transition: all 0.7s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            margin: 0 auto;
+            display: block;
+        }
+
+        /* Keyframe animation for prediction result */
+        @keyframes fadeInZoom {
+            0% {
+                opacity: 0;
+                transform: scale(0.8);
+            }
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .prediction-result {
+            animation: fadeInZoom 0.6s ease-out forwards;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <main class="flex-grow p-4 md:p-8 flex items-center justify-center">
+        <div class="w-full max-w-2xl bg-[#161b22] p-8 rounded-3xl shadow-2xl border border-gray-700/50">
+            <h1 class="text-4xl md:text-5xl font-extrabold text-center text-white mb-2 tracking-tight">
+                AI Digit Recognition
+            </h1>
+            <p class="text-center text-gray-400 mb-8">Upload a handwritten digit image (0-9) to see the prediction.</p>
+
+            <!-- File Upload and Drag & Drop Area -->
+            <div id="drop-area" 
+                 class="p-12 text-center rounded-2xl transition-all hover:border-[#007bff] hover:shadow-lg hover:shadow-[#007bff]/20">
+                <input type="file" id="fileElem" accept="image/*" class="hidden">
+                <label for="fileElem" class="block">
+                    <svg class="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.885 2.585A4 4 0 014 20h16a4 4 0 01-3.115-1.415A4 4 0 0117 16V9a2 2 0 00-2-2h-3V4a1 1 0 00-2 0v3H9a2 2 0 00-2 2v7z" />
+                    </svg>
+                    <p class="text-lg font-semibold text-gray-300 mt-2">
+                        Drag and drop your image here, or <span class="text-[#007bff] font-bold underline">click to select file</span>
+                    </p>
+                    <p class="text-sm text-gray-500 mt-1">(PNG or JPG, under 1MB)</p>
+                </label>
+            </div>
+
+            <!-- Prediction Result Container (Initially hidden) -->
+            <div id="result-container" class="mt-8 opacity-0 flex flex-col items-center justify-center p-6 bg-[#0d1117] rounded-xl shadow-inner border border-gray-700/50">
+                
+                <!-- Prediction Header -->
+                <h2 class="text-2xl font-bold mb-4 text-[#007bff] uppercase tracking-wider" id="result-title">
+                    Processing Image...
+                </h2>
+
+                <!-- Image Preview Area -->
+                <div class="mb-4">
+                    <img id="image-preview" src="#" alt="Uploaded Digit" class="rounded-lg shadow-xl" />
+                </div>
+                
+                <!-- Loading State / Prediction Text -->
+                <div id="loading-spinner" class="spinner hidden"></div>
+                <p id="prediction-text" class="text-6xl font-black text-white prediction-result hidden">
+                    <span class="text-gray-500">Result: </span><span id="predicted-digit"></span>
+                </p>
+
+                <p id="error-message" class="text-red-500 font-semibold mt-4 hidden"></p>
+                
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="p-4 text-center text-gray-600 border-t border-gray-700/50">
+        <p class="text-sm">Made by Taimoor Khan</p>
+    </footer>
+
+    <script>
+        // --- Configuration ---
+        const API_URL = 'http://localhost:8000/predict';
+        const MAX_RETRIES = 5;
+
+        // --- DOM Elements ---
+        const dropArea = document.getElementById('drop-area');
+        const fileElem = document.getElementById('fileElem');
+        const resultContainer = document.getElementById('result-container');
+        const imagePreview = document.getElementById('image-preview');
+        const resultTitle = document.getElementById('result-title');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const predictionText = document.getElementById('prediction-text');
+        const predictedDigit = document.getElementById('predicted-digit');
+        const errorMessage = document.getElementById('error-message');
+
+        // --- Utility Functions ---
+
+        /**
+         * Clears previous results and prepares the UI for a new upload.
+         */
+        function resetUI() {
+            resultContainer.style.display = 'none';
+            resultContainer.classList.remove('opacity-100');
+            imagePreview.src = '#';
+            imagePreview.className = 'rounded-lg shadow-xl'; // Reset all classes
+            loadingSpinner.classList.add('hidden');
+            predictionText.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            resultTitle.textContent = 'Processing Image...';
+        }
+
+        /**
+         * Handles the file processing and prediction sequence.
+         * @param {File} file The image file object.
+         */
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                alertUser('Please upload a valid image file.', true);
+                return;
+            }
+
+            resetUI();
+            
+            // 1. Show Result Container and Small Preview
+            resultContainer.style.display = 'flex';
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                imagePreview.src = e.target.result;
+                // Add Small Preview Class: h-16 w-16
+                imagePreview.classList.add('h-16', 'w-16', 'scale-100');
+                
+                // Animate container fade-in
+                setTimeout(() => {
+                    resultContainer.classList.add('opacity-100');
+                }, 10);
+                
+                // 2. Animate to Medium Size
+                setTimeout(() => {
+                    imagePreview.classList.remove('h-16', 'w-16');
+                    imagePreview.classList.add('h-32', 'w-32');
+                    resultTitle.textContent = 'Analyzing Features...';
+                }, 500);
+
+                // 3. Start Prediction After Medium Animation
+                setTimeout(() => {
+                    resultTitle.textContent = 'Sending to AI Model...';
+                    imagePreview.classList.add('opacity-50'); // Dim image slightly
+                    loadingSpinner.classList.remove('hidden');
+                    predictImage(file);
+                }, 1500);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        /**
+         * Shows a custom alert message in the UI instead of using alert().
+         * @param {string} message The message to display.
+         * @param {boolean} isError If true, displays as an error.
+         */
+        function alertUser(message, isError = false) {
+            errorMessage.textContent = message;
+            errorMessage.classList.remove('hidden');
+            if (isError) {
+                errorMessage.classList.add('text-red-500');
+            } else {
+                errorMessage.classList.add('text-yellow-500');
+            }
+            loadingSpinner.classList.add('hidden');
+            resultTitle.textContent = 'Error';
+            imagePreview.classList.remove('opacity-50');
+        }
+
+        /**
+         * Exponential backoff retry logic for the API call.
+         * @param {File} file The image file.
+         * @param {number} attempt Current retry attempt count.
+         */
+        async function predictImage(file, attempt = 1) {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                // 4. Display Final Prediction
+                loadingSpinner.classList.add('hidden');
+                imagePreview.classList.add('hidden'); // Hide the image
+
+                resultTitle.textContent = 'Prediction Complete!';
+                predictedDigit.textContent = data.prediction;
+                predictionText.classList.remove('hidden');
+                
+            } catch (error) {
+                console.error('Prediction failed:', error);
+
+                if (attempt < MAX_RETRIES) {
+                    const delay = Math.pow(2, attempt) * 1000; // Exponential backoff (1s, 2s, 4s, 8s, ...)
+                    // console.log(`Retrying in ${delay / 1000} seconds... (Attempt ${attempt + 1})`);
+                    setTimeout(() => predictImage(file, attempt + 1), delay);
+                    resultTitle.textContent = `Connection Lost. Retrying... (Attempt ${attempt})`;
+                } else {
+                    alertUser('Failed to connect to the prediction server after multiple retries. Please check if the FastAPI server is running.', true);
+                }
+            }
+        }
+
+        // --- Event Handlers ---
+
+        // Handle File Input Change
+        fileElem.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        });
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false); // Global catch for full window drag
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // Highlight drag area when a file is dragged over it
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropArea.addEventListener(eventName, () => dropArea.classList.add('highlight'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, () => dropArea.classList.remove('highlight'), false);
+        });
+
+        // Handle dropped files
+        dropArea.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        }
+
+    </script>
+</body>
+</html>
